@@ -14,7 +14,41 @@ public class PlayerShooting : MonoBehaviour
     private bool isHoldingShoot = false;
     private PickUp currentPickup;
 
+    // Command pattern: each player action is a command object.
+    private ICommand shootCommand;
+    private ICommand reloadCommand;
+    private ICommand dropCommand;
+
     public PickUp CurrentPickup { get { return currentPickup; } }
+
+    // -------------------------------------------------------------- commands
+
+    private void Awake()
+    {
+        ConfigureCommands();
+    }
+
+    private void ConfigureCommands()
+    {
+        dropCommand = new DropCommand(this);
+
+        if (gun == null)
+        {
+            shootCommand = null;
+            reloadCommand = null;
+            return;
+        }
+
+        shootCommand = new ShootCommand(gun);
+        reloadCommand = new ReloadCommand(gun);
+    }
+
+    // Always use this when the equipped weapon changes, so the commands follow it.
+    public void SetGun(Gun newGun)
+    {
+        gun = newGun;
+        ConfigureCommands();
+    }
 
     // ---------------------------------------------------------------- input
 
@@ -28,8 +62,8 @@ public class PlayerShooting : MonoBehaviour
         if (!value.isPressed || !GameManager.IsPlaying)
             return;
 
-        if (gun != null)
-            gun.TryReload();
+        if (reloadCommand != null)
+            reloadCommand.Execute();
     }
 
     public void OnPickUp(InputValue value)
@@ -39,7 +73,7 @@ public class PlayerShooting : MonoBehaviour
 
         if (currentPickup != null)
         {
-            currentPickup.OnPickUp(this);
+            new PickUpCommand(currentPickup, this).Execute();
             currentPickup = null;
         }
     }
@@ -49,7 +83,7 @@ public class PlayerShooting : MonoBehaviour
         if (!value.isPressed || !GameManager.IsPlaying)
             return;
 
-        DropCurrentWeapon(false);
+        dropCommand.Execute();
     }
 
     // ----------------------------------------------------------------- life
@@ -73,12 +107,12 @@ public class PlayerShooting : MonoBehaviour
 
         if (equipped != null)
         {
-            gun = equipped;
+            SetGun(equipped);
             gun.aimCamera = playerCamera;
         }
         else
         {
-            gun = null;
+            SetGun(null);
         }
     }
 
@@ -93,8 +127,8 @@ public class PlayerShooting : MonoBehaviour
 
         UpdatePickupTarget();
 
-        if (isHoldingShoot && gun != null)
-            gun.Shoot();
+        if (isHoldingShoot && shootCommand != null)
+            shootCommand.Execute();
     }
 
     // -------------------------------------------------------------- pickups
@@ -209,11 +243,11 @@ public class PlayerShooting : MonoBehaviour
         if (ammo >= 0)
             newGun.SetAmmo(ammo);
 
-        gun = newGun;
+        SetGun(newGun);
         return true;
     }
 
-    private void DropCurrentWeapon(bool destroyEvenIfCantDrop)
+    public void DropCurrentWeapon(bool destroyEvenIfCantDrop)
     {
         if (gun == null)
             return;
@@ -224,7 +258,7 @@ public class PlayerShooting : MonoBehaviour
             return;
 
         Transform root = GetWeaponRoot(gun);
-        gun = null;
+        SetGun(null);
         isHoldingShoot = false;
 
         if (root != null)

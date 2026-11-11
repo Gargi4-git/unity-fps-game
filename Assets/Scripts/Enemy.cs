@@ -83,6 +83,9 @@ public class Enemy : MonoBehaviour, IDamageable
 
     public State state = State.Idle;
 
+    // State pattern: the object that holds the behaviour of the current state.
+    private EnemyState currentState;
+
     public bool IsDead { get { return state == State.Dead; } }
     public float HealthNormalized { get { return Mathf.Clamp01(health / (float)Mathf.Max(1, maxHealth)); } }
 
@@ -110,6 +113,8 @@ public class Enemy : MonoBehaviour, IDamageable
     {
         if (health > maxHealth)
             maxHealth = health;
+
+        TransitionTo(new IdleState(), State.Idle);
     }
 
     private void OnEnable()
@@ -259,14 +264,7 @@ public class Enemy : MonoBehaviour, IDamageable
 
         LookForPlayer();
 
-        switch (state)
-        {
-            case State.Idle:       Idle();       break;
-            case State.Patrolling: Patrolling(); break;
-            case State.Chasing:    Chasing();    break;
-            case State.Attacking:  Attacking();  break;
-            case State.Fleeing:    Fleeing();    break;
-        }
+        currentState.Update();
 
         FacePlayer();
     }
@@ -318,97 +316,177 @@ public class Enemy : MonoBehaviour, IDamageable
         lastKnownPlayerPosition = playerTransform.position;
 
         if (state == State.Idle || state == State.Patrolling)
-            state = State.Chasing;
+            TransitionTo(new ChasingState(), State.Chasing);
     }
 
     // --------------------------------------------------------------- states
 
-    private void Idle()
-    {
-        agent.ResetPath();
-        idleTimeCounter -= Time.deltaTime;
+    // State pattern ------------------------------------------------------
+    // Each state is its own class. Enemy.Update() only calls
+    // currentState.Update(); the states decide when to switch (TransitionTo).
 
-        if (idleTimeCounter <= 0f)
+    private abstract class EnemyState
+    {
+        protected Enemy enemy;
+
+        public void SetContext(Enemy enemy)
         {
-            if (patrolPoints != null && patrolPoints.Length > 0)
-                state = State.Patrolling;
-            else
-                idleTimeCounter = idleTime;
+            this.enemy = enemy;
+        }
+
+        public virtual void Enter()
+        {
+        }
+
+        public virtual void Exit()
+        {
+        }
+
+        public abstract void Update();
+    }
+
+    private sealed class IdleState : EnemyState
+    {
+        public override void Update()
+        {
+            enemy.agent.ResetPath();
+            enemy.idleTimeCounter -= Time.deltaTime;
+
+            if (enemy.idleTimeCounter <= 0f)
+            {
+                if (enemy.patrolPoints != null && enemy.patrolPoints.Length > 0)
+                    enemy.TransitionTo(new PatrollingState(), State.Patrolling);
+                else
+                    enemy.idleTimeCounter = enemy.idleTime;
+            }
         }
     }
 
-    private void Patrolling()
+    private sealed class PatrollingState : EnemyState
     {
-        if (patrolPoints == null || patrolPoints.Length == 0)
+        public override void Update()
         {
-            state = State.Idle;
-            return;
-        }
-
-        if (FlatDistance(transform.position, currentTarget) < positionThreshold)
-        {
-            if (Random.Range(0, 100) < 10)
+            if (enemy.patrolPoints == null || enemy.patrolPoints.Length == 0)
             {
-                idleTimeCounter = idleTime;
-                state = State.Idle;
+                enemy.TransitionTo(new IdleState(), State.Idle);
                 return;
             }
 
-            currentPointIndex = (currentPointIndex + 1) % patrolPoints.Length;
-            currentTarget = patrolPoints[currentPointIndex].position;
-        }
+            if (FlatDistance(enemy.transform.position, enemy.currentTarget) < enemy.positionThreshold)
+            {
+                if (Random.Range(0, 100) < 10)
+                {
+                    enemy.idleTimeCounter = enemy.idleTime;
+                    enemy.TransitionTo(new IdleState(), State.Idle);
+                    return;
+                }
 
-        agent.SetDestination(currentTarget);
-    }
+                enemy.currentPointIndex = (enemy.currentPointIndex + 1) % enemy.patrolPoints.Length;
+                enemy.currentTarget = enemy.patrolPoints[enemy.currentPointIndex].position;
+            }
 
-    private void Chasing()
-    {
-        if (ShouldFlee())
-        {
-            StartFlee();
-            return;
-        }
-
-        agent.SetDestination(lastKnownPlayerPosition);
-
-        float distance = Vector3.Distance(transform.position, playerTransform.position);
-
-        if (canSeePlayer && distance <= attackDistance)
-        {
-            state = State.Attacking;
-            attackStartTime = Time.time;
-            return;
-        }
-
-        // Reached the last place we saw the player and nobody is there:
-        // look around for a bit, then go back to patrolling.
-        if (!canSeePlayer && alertTimer <= 0f &&
-            !agent.pathPending &&
-            agent.remainingDistance <= agent.stoppingDistance + positionThreshold)
-        {
-            idleTimeCounter = searchTime;
-            state = State.Idle;
+            enemy.agent.SetDestination(enemy.currentTarget);
         }
     }
 
-    private void Attacking()
+    private sealed class ChasingState : EnemyState
     {
-        idleTimeCounter = idleTime;
-        agent.ResetPath();
-
-        if (ShouldFlee())
+        public override void Update()
         {
-            StartFlee();
-            return;
+            if (enemy.ShouldFlee())
+            {
+                enemy.StartFlee();
+                return;
+            }
+
+            enemy.agent.SetDestination(enemy.lastKnownPlayerPosition);
+
+            float distance = Vector3.Distance(enemy.transform.position, enemy.playerTransform.position);
+
+            if (enemy.canSeePlayer && distance <= enemy.attackDistance)
+            {
+                enemy.TransitionTo(new AttackingState(), State.Attacking);
+                enemy.attackStartTime = Time.time;
+                return;
+            }
+
+            // Reached the last place we saw the player and nobody is there:
+            // look around for a bit, then go back to patrolling.
+            if (!enemy.canSeePlayer && enemy.alertTimer <= 0f &&
+                !enemy.agent.pathPending &&
+                enemy.agent.remainingDistance <= enemy.agent.stoppingDistance + enemy.positionThreshold)
+            {
+                enemy.idleTimeCounter = enemy.searchTime;
+                enemy.TransitionTo(new IdleState(), State.Idle);
+            }
         }
+    }
 
-        if (canSeePlayer && Time.time >= attackStartTime + reactionTime)
-            Shoot();
+    private sealed class AttackingState : EnemyState
+    {
+        public override void Update()
+        {
+            enemy.idleTimeCounter = enemy.idleTime;
+            enemy.agent.ResetPath();
 
-        float distance = Vector3.Distance(transform.position, playerTransform.position);
+            if (enemy.ShouldFlee())
+            {
+                enemy.StartFlee();
+                return;
+            }
 
-        if (!canSeePlayer || distance > attackDistance)
-            state = State.Chasing;
+            if (enemy.canSeePlayer && Time.time >= enemy.attackStartTime + enemy.reactionTime)
+                enemy.Shoot();
+
+            float distance = Vector3.Distance(enemy.transform.position, enemy.playerTransform.position);
+
+            if (!enemy.canSeePlayer || distance > enemy.attackDistance)
+                enemy.TransitionTo(new ChasingState(), State.Chasing);
+        }
+    }
+
+    private sealed class FleeingState : EnemyState
+    {
+        public override void Update()
+        {
+            enemy.fleeTimer -= Time.deltaTime;
+            enemy.agent.SetDestination(enemy.fleeTarget);
+
+            bool arrived = !enemy.agent.pathPending &&
+                           enemy.agent.remainingDistance <= enemy.agent.stoppingDistance + enemy.positionThreshold;
+
+            if (enemy.fleeTimer <= 0f || arrived)
+            {
+                enemy.idleTimeCounter = 1f;
+
+                if (enemy.canSeePlayer)
+                    enemy.TransitionTo(new ChasingState(), State.Chasing);
+                else
+                    enemy.TransitionTo(new IdleState(), State.Idle);
+            }
+        }
+    }
+
+    private sealed class DeadState : EnemyState
+    {
+        public override void Update()
+        {
+        }
+    }
+
+    private void TransitionTo(EnemyState nextState, State stateValue)
+    {
+        if (currentState != null && currentState.GetType() == nextState.GetType())
+            return;
+
+        if (currentState != null)
+            currentState.Exit();
+
+        currentState = nextState;
+        currentState.SetContext(this);
+        state = stateValue;
+
+        currentState.Enter();
     }
 
     // A badly hurt enemy runs away once; if it gets cornered it fights back.
@@ -420,25 +498,10 @@ public class Enemy : MonoBehaviour, IDamageable
     private void StartFlee()
     {
         fledOnce = true;
-        state = State.Fleeing;
+        TransitionTo(new FleeingState(), State.Fleeing);
         fleeTimer = fleeDuration;
         fleeTarget = PickFleePoint();
         agent.SetDestination(fleeTarget);
-    }
-
-    private void Fleeing()
-    {
-        fleeTimer -= Time.deltaTime;
-        agent.SetDestination(fleeTarget);
-
-        bool arrived = !agent.pathPending &&
-                       agent.remainingDistance <= agent.stoppingDistance + positionThreshold;
-
-        if (fleeTimer <= 0f || arrived)
-        {
-            idleTimeCounter = 1f;
-            state = canSeePlayer ? State.Chasing : State.Idle;
-        }
     }
 
     private Vector3 PickFleePoint()
@@ -515,7 +578,7 @@ public class Enemy : MonoBehaviour, IDamageable
         lastKnownPlayerPosition = playerTransform.position;
 
         if (state == State.Idle || state == State.Patrolling)
-            state = State.Chasing;
+            TransitionTo(new ChasingState(), State.Chasing);
     }
 
     // --------------------------------------------------------------- damage
@@ -578,7 +641,7 @@ public class Enemy : MonoBehaviour, IDamageable
         if (state == State.Dead)
             return;
 
-        state = State.Dead;
+        TransitionTo(new DeadState(), State.Dead);
 
         if (blinkRoutine != null)
         {

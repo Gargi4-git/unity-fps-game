@@ -17,8 +17,8 @@ public class PickUp : MonoBehaviour
     // Ammo left in the weapon when it was dropped (-1 = full / unknown).
     [HideInInspector] public int storedAmmo = -1;
 
-    private Renderer[] renderers;
-    private Material[][] originalMaterials;
+    // Decorator pattern: the look of the pickup (renderers + highlight on top).
+    private IPickupVisual pickupVisual;
     private bool isHighlighted;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
@@ -57,12 +57,8 @@ public class PickUp : MonoBehaviour
             valid.Add(r);
         }
 
-        renderers = valid.ToArray();
-        originalMaterials = new Material[renderers.Length][];
-
-        // sharedMaterials (not .materials) so we don't leak material copies.
-        for (int i = 0; i < renderers.Length; i++)
-            originalMaterials[i] = renderers[i].sharedMaterials;
+        IPickupVisual rendererVisual = new RendererVisual(valid.ToArray());
+        pickupVisual = new HighlightDecorator(rendererVisual, highlightedMaterial);
     }
 
     private void OnEnable()
@@ -83,24 +79,10 @@ public class PickUp : MonoBehaviour
 
         isHighlighted = enable;
 
-        for (int i = 0; i < renderers.Length; i++)
-        {
-            if (renderers[i] == null) continue;
-
-            if (enable)
-            {
-                Material[] mats = new Material[originalMaterials[i].Length];
-
-                for (int j = 0; j < mats.Length; j++)
-                    mats[j] = highlightedMaterial;
-
-                renderers[i].sharedMaterials = mats;
-            }
-            else
-            {
-                renderers[i].sharedMaterials = originalMaterials[i];
-            }
-        }
+        if (enable)
+            pickupVisual.Apply(highlightedMaterial);
+        else
+            pickupVisual.Restore();
     }
 
     // Kept for backwards compatibility.

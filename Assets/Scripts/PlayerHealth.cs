@@ -1,6 +1,7 @@
+using System.Collections.Generic;
 using UnityEngine;
 
-public class PlayerHealth : MonoBehaviour, IDamageable
+public class PlayerHealth : MonoBehaviour, IDamageable, ISubject
 {
     public AudioClip hitSFX;
     public AudioClip deathSFX;
@@ -17,6 +18,9 @@ public class PlayerHealth : MonoBehaviour, IDamageable
     public bool godMode = false;
 
     private bool isDead = false;
+
+    // Observer pattern: everything that wants to know when the player is hurt.
+    private readonly List<IObserver> observers = new List<IObserver>();
 
     public bool IsDead { get { return isDead; } }
 
@@ -42,17 +46,35 @@ public class PlayerHealth : MonoBehaviour, IDamageable
 
         health = Mathf.Max(0, health - amount);
 
-        if (PlayerLook.Instance != null)
-            PlayerLook.Instance.AddShake(shakeDuration, shakeMagnitude);
-
-        if (UIManager.Instance != null)
-            UIManager.Instance.InstantiateHitUI();
-
-        if (AudioManager.Instance != null)
-            AudioManager.Instance.PlaySFX(hitSFX);
+        // Camera shake, hit overlay and hit sound are done by the observers.
+        Notify();
 
         if (health <= 0)
             Die();
+    }
+
+    // ------------------------------------------------ ISubject (Observer)
+
+    public void Attach(IObserver observer)
+    {
+        if (observer != null && !observers.Contains(observer))
+            observers.Add(observer);
+    }
+
+    public void Detach(IObserver observer)
+    {
+        observers.Remove(observer);
+    }
+
+    public void Notify()
+    {
+        foreach (IObserver observer in observers.ToArray())
+            observer.OnSubjectChanged(this);
+    }
+
+    private void OnDestroy()
+    {
+        observers.Clear();
     }
 
     public void Heal(int amount)

@@ -12,7 +12,7 @@ using UnityEngine.UI;
 ///
 /// Keeps the original API (UIManager.Instance, HitUI, InstantiateHitUI).
 /// </summary>
-public class UIManager : MonoBehaviour
+public class UIManager : MonoBehaviour, IObserver
 {
     public static UIManager Instance;
 
@@ -101,6 +101,9 @@ public class UIManager : MonoBehaviour
 
     private void OnDestroy()
     {
+        if (playerHealth != null)
+            playerHealth.Detach(this);
+
         if (Instance == this)
             Instance = null;
 
@@ -110,7 +113,15 @@ public class UIManager : MonoBehaviour
 
     private void FindPlayerReferences()
     {
-        if (playerHealth == null) playerHealth = FindFirstObjectByType<PlayerHealth>();
+        if (playerHealth == null)
+        {
+            playerHealth = FindFirstObjectByType<PlayerHealth>();
+
+            // Observer pattern: subscribe to the player's health.
+            if (playerHealth != null)
+                playerHealth.Attach(this);
+        }
+
         if (playerShooting == null) playerShooting = FindFirstObjectByType<PlayerShooting>();
         if (playerInput == null)
             playerInput = FindFirstObjectByType<UnityEngine.InputSystem.PlayerInput>();
@@ -404,6 +415,23 @@ public class UIManager : MonoBehaviour
     // ===================================================================
     // Public API
     // ===================================================================
+
+    // Observer pattern: PlayerHealth (subject) calls this whenever the player is hit.
+    public void OnSubjectChanged(ISubject subject)
+    {
+        PlayerHealth healthSubject = subject as PlayerHealth;
+
+        if (healthSubject == null)
+            return;
+
+        if (PlayerLook.Instance != null)
+            PlayerLook.Instance.AddShake(healthSubject.shakeDuration, healthSubject.shakeMagnitude);
+
+        InstantiateHitUI();
+
+        if (AudioManager.Instance != null)
+            AudioManager.Instance.PlaySFX(healthSubject.hitSFX);
+    }
 
     // Original API: called by PlayerHealth when the player is hit.
     public void InstantiateHitUI()
